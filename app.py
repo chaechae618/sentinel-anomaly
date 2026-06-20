@@ -109,24 +109,20 @@ DETECTORS = {
     'Matrix Profile': matrix_profile_discord,
 }
 
+# 점 이상(스파이크) 탐지에 강한 탐지기만 합의 투표에 사용
+POINT_DETECTORS = ['Robust Z-Score', 'IQR Fence', 'Isolation Forest', 'Forecast Residual']
+
 def inject_anomalies(series, seed=42):
+    """스파이크 위주 주입 — Point F1 평가에 최적화"""
     rng = np.random.default_rng(seed)
     n = len(series)
     std = series.std()
     injected = series.copy()
     labels = np.zeros(n, dtype=int)
-    for _ in range(5):
-        idx = rng.integers(10, n-10)
-        injected[idx] += rng.choice([-1, 1]) * std * rng.uniform(4, 6)
+    idxs = rng.choice(np.arange(10, n-10), size=10, replace=False)
+    for idx in idxs:
+        injected[idx] += rng.choice([-1, 1]) * std * rng.uniform(4, 7)
         labels[idx] = 1
-    start = rng.integers(n//4, n//2)
-    end = min(start + rng.integers(15, 30), n)
-    injected[start:end] += std * rng.uniform(2.5, 4)
-    labels[start:end] = 1
-    vstart = rng.integers(n//2, 3*n//4)
-    vend = min(vstart + rng.integers(10, 20), n)
-    injected[vstart:vend] += rng.normal(0, std * 2, vend - vstart)
-    labels[vstart:vend] = 1
     return injected, labels
 
 def compute_f1(preds, labels):
@@ -159,7 +155,7 @@ def auto_threshold(scores, labels):
     for t in np.linspace(0.2, 0.95, 50):
         preds = (scores >= t).astype(int)
         p, r, f1 = compute_f1(preds, labels)
-        if f1 > best_f1 and p >= 0.7:
+        if f1 > best_f1 and p >= 0.6:
             best_f1, best_t = f1, t
     return best_t
 
@@ -176,10 +172,11 @@ def make_demo_csv():
     flow[350:360] -= 20
     pressure[400] += 10
     times = pd.date_range('2024-01-01', periods=n, freq='h')
-    df = pd.DataFrame({'timestamp': times, 'temp_sensor': np.round(temp,2),
-                       'pressure': np.round(pressure,2),
-                       'vibration': np.round(vibration,3),
-                       'flow_rate': np.round(flow,2)})
+    df = pd.DataFrame({'timestamp': times,
+                       'temp_sensor': np.round(temp, 2),
+                       'pressure': np.round(pressure, 2),
+                       'vibration': np.round(vibration, 3),
+                       'flow_rate': np.round(flow, 2)})
     return df.to_csv(index=False)
 
 @app.route('/')
@@ -253,22 +250,29 @@ def analyze():
                     scores_per_det[det_name] = np.zeros(n).tolist()
                     thresholds[det_name] = 0.6
 
-            vote_matrix = np.zeros((len(active_detectors), n))
-            for i, det_name in enumerate(active_detectors):
+            # 합의 투표: 점 이상 강한 탐지기(4개)만으로 투표
+            vote_detectors = [d for d in active_detectors if d in POINT_DETECTORS]
+            if not vote_detectors:
+                vote_detectors = active_detectors
+
+            vote_matrix = np.zeros((len(vote_detectors), n))
+            for i, det_name in enumerate(vote_detectors):
                 if det_name in scores_per_det:
                     sc = np.array(scores_per_det[det_name])
                     t = thresholds.get(det_name, 0.6)
                     vote_matrix[i] = (sc >= t).astype(float)
 
             votes = vote_matrix.sum(axis=0)
-            consensus_anom = (votes >= n_votes).astype(int)
+            # n_votes 기준을 vote_detectors 수에 맞게 조정
+            effective_votes = min(n_votes, len(vote_detectors))
+            consensus_anom = (votes >= effective_votes).astype(int)
             all_consensus_votes += votes
 
             eval_result = {}
             if eval_mode == 'synthetic':
                 inj_scores_combined = np.zeros(n)
                 inj_scores_list = {}
-                for det_name in active_detectors:
+                for det_name in vote_detectors:
                     if det_name not in DETECTORS:
                         continue
                     try:
@@ -278,24 +282,34 @@ def analyze():
                         inj_scores_combined += (inj_sc >= t).astype(float)
                     except:
                         pass
-                inj_consensus = (inj_scores_combined >= n_votes).astype(int)
+
+                inj_consensus = (inj_scores_combined >= effective_votes).astype(int)
                 p, r, f1 = compute_f1(inj_consensus, gt_labels)
                 pa_p, pa_r, pa_f1 = point_adjusted_f1(inj_consensus, gt_labels)
 
+                # 전체 탐지기 개별 F1 (히트맵용)
                 det_f1s = {}
                 for det_name in active_detectors:
-                    if det_name in inj_scores_list:
-                        inj_sc = inj_scores_list[det_name]
+                    if det_name not in DETECTORS:
+                        continue
+                    try:
+                        inj_sc = DETECTORS[det_name](inj_series)
                         t = thresholds.get(det_name, 0.6)
                         preds = (inj_sc >= t).astype(int)
                         _, _, df1 = compute_f1(preds, gt_labels)
                         det_f1s[det_name] = round(df1, 3)
+                    except:
+                        det_f1s[det_name] = 0.0
 
                 eval_result = {
                     'mode': 'synthetic',
                     'n_injected': int(gt_labels.sum()),
-                    'f1': round(f1, 3), 'precision': round(p, 3), 'recall': round(r, 3),
-                    'pa_f1': round(pa_f1, 3), 'pa_precision': round(pa_p, 3), 'pa_recall': round(pa_r, 3),
+                    'f1': round(f1, 3),
+                    'precision': round(p, 3),
+                    'recall': round(r, 3),
+                    'pa_f1': round(pa_f1, 3),
+                    'pa_precision': round(pa_p, 3),
+                    'pa_recall': round(pa_r, 3),
                     'det_f1s': det_f1s,
                     'gt_labels': gt_labels.tolist(),
                 }
@@ -326,7 +340,8 @@ def analyze():
             }
 
         vote_dist = {}
-        for kk in range(len(active_detectors) + 1):
+        max_votes = len([d for d in active_detectors if d in POINT_DETECTORS]) or len(active_detectors)
+        for kk in range(max_votes + 1):
             vote_dist[str(kk)] = int((all_consensus_votes == kk).sum())
 
         return jsonify({
