@@ -7,8 +7,6 @@ warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
 
-# ─── Detectors ────────────────────────────────────────────────────────────────
-
 def robust_zscore(series):
     med = np.median(series)
     mad = np.median(np.abs(series - med))
@@ -39,7 +37,7 @@ def isolation_forest(series):
         w = series[max(0, i-window):i+1]
         feats.append([w.mean(), w.std()+1e-9, series[i], i/n])
     feats = np.array(feats)
-    clf = IsolationForest(n_estimators=50, contamination=0.1, random_state=42)
+    clf = IsolationForest(n_estimators=50, contamination=0.05, random_state=42)
     clf.fit(feats)
     raw = -clf.score_samples(feats)
     return (raw - raw.min()) / (raw.max() - raw.min() + 1e-9)
@@ -80,12 +78,10 @@ def matrix_profile_discord(series, m=20):
     k = n - m + 1
     if k < 2:
         return np.zeros(n)
-    # z-normalize all subsequences at once
     subs = np.array([series[i:i+m] for i in range(k)], dtype=float)
     mu = subs.mean(axis=1, keepdims=True)
     std = subs.std(axis=1, keepdims=True) + 1e-9
     subs_z = (subs - mu) / std
-    # Sample random neighbors instead of O(n^2) exhaustive search
     rng = np.random.default_rng(42)
     excl = max(1, m // 4)
     mp = np.full(k, np.inf)
@@ -113,15 +109,13 @@ DETECTORS = {
     'Matrix Profile': matrix_profile_discord,
 }
 
-# ─── Synthetic injection ───────────────────────────────────────────────────────
-
 def inject_anomalies(series, seed=42):
     rng = np.random.default_rng(seed)
     n = len(series)
     std = series.std()
     injected = series.copy()
     labels = np.zeros(n, dtype=int)
-    for _ in range(3):
+    for _ in range(5):
         idx = rng.integers(10, n-10)
         injected[idx] += rng.choice([-1, 1]) * std * rng.uniform(4, 6)
         labels[idx] = 1
@@ -134,8 +128,6 @@ def inject_anomalies(series, seed=42):
     injected[vstart:vend] += rng.normal(0, std * 2, vend - vstart)
     labels[vstart:vend] = 1
     return injected, labels
-
-# ─── Evaluation ───────────────────────────────────────────────────────────────
 
 def compute_f1(preds, labels):
     tp = np.sum((preds == 1) & (labels == 1))
@@ -163,15 +155,13 @@ def point_adjusted_f1(preds, labels):
     return compute_f1(adj_preds, labels)
 
 def auto_threshold(scores, labels):
-    best_f1, best_t = 0, 0.5
-    for t in np.linspace(0.1, 0.95, 50):
+    best_f1, best_t = 0, 0.6
+    for t in np.linspace(0.2, 0.95, 50):
         preds = (scores >= t).astype(int)
-        _, _, f1 = compute_f1(preds, labels)
-        if f1 > best_f1:
+        p, r, f1 = compute_f1(preds, labels)
+        if f1 > best_f1 and p >= 0.7:
             best_f1, best_t = f1, t
     return best_t
-
-# ─── Demo data ────────────────────────────────────────────────────────────────
 
 def make_demo_csv():
     rng = np.random.default_rng(0)
@@ -191,8 +181,6 @@ def make_demo_csv():
                        'vibration': np.round(vibration,3),
                        'flow_rate': np.round(flow,2)})
     return df.to_csv(index=False)
-
-# ─── Routes ───────────────────────────────────────────────────────────────────
 
 @app.route('/')
 def index():
@@ -258,18 +246,18 @@ def analyze():
                 try:
                     sc = det_fn(series)
                     inj_sc = det_fn(inj_series)
-                    t = auto_threshold(inj_sc, gt_labels)
+                    t = max(0.5, auto_threshold(inj_sc, gt_labels))
                     scores_per_det[det_name] = sc.tolist()
                     thresholds[det_name] = float(t)
                 except Exception:
                     scores_per_det[det_name] = np.zeros(n).tolist()
-                    thresholds[det_name] = 0.5
+                    thresholds[det_name] = 0.6
 
             vote_matrix = np.zeros((len(active_detectors), n))
             for i, det_name in enumerate(active_detectors):
                 if det_name in scores_per_det:
                     sc = np.array(scores_per_det[det_name])
-                    t = thresholds.get(det_name, 0.5)
+                    t = thresholds.get(det_name, 0.6)
                     vote_matrix[i] = (sc >= t).astype(float)
 
             votes = vote_matrix.sum(axis=0)
@@ -285,7 +273,7 @@ def analyze():
                         continue
                     try:
                         inj_sc = DETECTORS[det_name](inj_series)
-                        t = thresholds.get(det_name, 0.5)
+                        t = thresholds.get(det_name, 0.6)
                         inj_scores_list[det_name] = inj_sc
                         inj_scores_combined += (inj_sc >= t).astype(float)
                     except:
@@ -298,7 +286,7 @@ def analyze():
                 for det_name in active_detectors:
                     if det_name in inj_scores_list:
                         inj_sc = inj_scores_list[det_name]
-                        t = thresholds.get(det_name, 0.5)
+                        t = thresholds.get(det_name, 0.6)
                         preds = (inj_sc >= t).astype(int)
                         _, _, df1 = compute_f1(preds, gt_labels)
                         det_f1s[det_name] = round(df1, 3)
