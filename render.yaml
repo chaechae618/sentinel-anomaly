@@ -3,7 +3,7 @@ services:
     name: sentinel-anomaly
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --workers 2 --timeout 120
+    startCommand: gunicorn app:app --workers 1 --timeout 180
     plan: free
     envVars:
       - key: PYTHON_VERSION
