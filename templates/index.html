@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SENTINEL — 시계열 이상탐지</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg: #0b0f1a;
+  --surface: #111827;
+  --surface2: #1a2236;
+  --border: #1e2d45;
+  --text: #e2e8f0;
+  --muted: #64748b;
+  --accent: #06b6d4;
+  --accent2: #8b5cf6;
+  --accent3: #f59e0b;
+  --danger: #ef4444;
+  --success: #10b981;
+  --warn: #f59e0b;
+
+  --det0: #22d3ee;
+  --det1: #f59e0b;
+  --det2: #a78bfa;
+  --det3: #4ade80;
+  --det4: #f87171;
+  --det5: #fb923c;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: 'Inter', -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  font-size: 14px;
+}
+
+/* ── Topbar ── */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px; height: 52px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky; top:0; z-index:100;
+}
+.logo { font-weight:800; font-size:18px; letter-spacing:.08em; color:var(--accent); }
+.logo span { color:var(--text); }
+.badge {
+  font-size:10px; font-weight:700; padding:2px 8px; border-radius:4px;
+  background: rgba(6,182,212,.15); color:var(--accent); border:1px solid rgba(6,182,212,.3);
+  letter-spacing:.06em;
+}
+.topbar-right { display:flex; gap:12px; align-items:center; }
+.status-dot { width:7px; height:7px; border-radius:50%; background:var(--success); }
+
+/* ── Tabs ── */
+.tabs { display:flex; gap:0; padding:0 24px; border-bottom:1px solid var(--border); background:var(--surface); }
+.tab {
+  padding:12px 20px; cursor:pointer; font-size:13px; font-weight:500; color:var(--muted);
+  border-bottom:2px solid transparent; transition:.15s;
+}
+.tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+
+/* ── Layout ── */
+.layout { display:grid; grid-template-columns:300px 1fr; min-height:calc(100vh - 100px); }
+.sidebar { border-right:1px solid var(--border); padding:20px; background:var(--surface); }
+.main { padding:24px; overflow-y:auto; }
+
+/* ── Sidebar components ── */
+.upload-zone {
+  border:1.5px dashed var(--border); border-radius:10px;
+  padding:28px 16px; text-align:center; cursor:pointer;
+  transition:.2s; margin-bottom:16px; background:var(--bg);
+}
+.upload-zone:hover { border-color:var(--accent); background:rgba(6,182,212,.04); }
+.upload-icon { font-size:28px; margin-bottom:8px; }
+.upload-label { font-size:13px; font-weight:600; color:var(--text); }
+.upload-sub { font-size:11px; color:var(--muted); margin-top:4px; }
+
+.btn {
+  display:inline-flex; align-items:center; gap:6px; padding:8px 14px;
+  border-radius:7px; border:none; cursor:pointer; font-size:13px; font-weight:600;
+  transition:.15s;
+}
+.btn-primary { background:var(--accent); color:#000; }
+.btn-primary:hover { background:#0891b2; }
+.btn-outline { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+.btn-outline:hover { background:rgba(6,182,212,.1); }
+.btn-ghost { background:transparent; color:var(--muted); border:1px solid var(--border); }
+.btn-ghost:hover { color:var(--text); border-color:var(--text); }
+.btn-sm { padding:5px 10px; font-size:12px; }
+.btn:disabled { opacity:.4; cursor:not-allowed; }
+
+.section-title {
+  font-size:11px; font-weight:700; text-transform:uppercase;
+  letter-spacing:.08em; color:var(--muted); margin-bottom:10px;
+}
+.form-label { font-size:12px; color:var(--muted); margin-bottom:4px; display:block; }
+.form-group { margin-bottom:14px; }
+
+select, input[type=range] {
+  width:100%; background:var(--bg); color:var(--text);
+  border:1px solid var(--border); border-radius:6px;
+  padding:7px 10px; font-size:13px; outline:none;
+}
+select:focus { border-color:var(--accent); }
+
+.var-pills { display:flex; flex-wrap:wrap; gap:6px; }
+.var-pill {
+  padding:4px 10px; border-radius:20px; font-size:11px; font-weight:600;
+  cursor:pointer; border:1px solid var(--border); color:var(--muted);
+  transition:.15s;
+}
+.var-pill.active { border-color:var(--accent); color:var(--accent); background:rgba(6,182,212,.1); }
+
+.det-list { display:flex; flex-direction:column; gap:6px; }
+.det-item {
+  display:flex; align-items:center; gap:8px; padding:7px 10px;
+  border-radius:7px; background:var(--bg); cursor:pointer;
+  border:1px solid transparent; transition:.15s;
+}
+.det-item.active { border-color: rgba(255,255,255,.1); }
+.det-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.det-name { font-size:12px; }
+.det-check { margin-left:auto; color:var(--muted); font-size:11px; }
+
+.slider-row { display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-top:2px; }
+
+/* ── KPI Cards ── */
+.kpi-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:24px; }
+.kpi {
+  background:var(--surface); border:1px solid var(--border); border-radius:10px;
+  padding:16px; position:relative; overflow:hidden;
+}
+.kpi::before {
+  content:''; position:absolute; top:0; left:0; right:0; height:2px;
+}
+.kpi.cyan::before { background:var(--accent); }
+.kpi.purple::before { background:var(--accent2); }
+.kpi.amber::before { background:var(--accent3); }
+.kpi.green::before { background:var(--success); }
+.kpi-label { font-size:11px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.05em; }
+.kpi-val { font-size:28px; font-weight:800; margin:6px 0 2px; }
+.kpi-sub { font-size:11px; color:var(--muted); }
+.kpi.cyan .kpi-val { color:var(--accent); }
+.kpi.purple .kpi-val { color:var(--accent2); }
+.kpi.amber .kpi-val { color:var(--accent3); }
+.kpi.green .kpi-val { color:var(--success); }
+
+/* ── Cards ── */
+.card {
+  background:var(--surface); border:1px solid var(--border); border-radius:10px;
+  padding:20px; margin-bottom:16px;
+}
+.card-title { font-size:14px; font-weight:700; margin-bottom:4px; }
+.card-sub { font-size:12px; color:var(--muted); margin-bottom:16px; }
+
+/* ── Chart canvas wrappers ── */
+.chart-wrap { position:relative; width:100%; }
+.chart-wrap canvas { width:100% !important; }
+
+/* ── Heatmap ── */
+.heatmap-grid {
+  display:grid; gap:3px;
+}
+.heatmap-row { display:flex; align-items:center; gap:8px; }
+.heatmap-label { font-size:11px; color:var(--muted); width:130px; flex-shrink:0; text-align:right; }
+.heatmap-cells { display:flex; gap:1px; flex:1; overflow:hidden; }
+.heatmap-cell { flex:1; height:14px; border-radius:1px; min-width:2px; }
+
+/* ── Var density bars ── */
+.density-list { display:flex; flex-direction:column; gap:10px; }
+.density-row { }
+.density-header { display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px; }
+.density-varname { font-weight:600; }
+.density-stat { color:var(--muted); }
+.density-bar-bg { background:var(--bg); border-radius:4px; height:8px; overflow:hidden; }
+.density-bar-fill { height:100%; border-radius:4px; background:var(--accent); }
+
+/* ── Eval table ── */
+.eval-table { width:100%; border-collapse:collapse; font-size:12px; }
+.eval-table th { padding:8px 12px; text-align:left; color:var(--muted); font-weight:600; border-bottom:1px solid var(--border); }
+.eval-table td { padding:8px 12px; border-bottom:1px solid rgba(255,255,255,.04); }
+.eval-table tr:last-child td { border-bottom:none; }
+.score-badge {
+  display:inline-block; padding:2px 7px; border-radius:4px; font-weight:700;
+  font-size:11px;
+}
+.score-good { background:rgba(16,185,129,.15); color:var(--success); }
+.score-ok { background:rgba(245,158,11,.15); color:var(--warn); }
+.score-bad { background:rgba(239,68,68,.15); color:var(--danger); }
+
+/* ── Vote dist ── */
+.vote-bars { display:flex; align-items:flex-end; gap:6px; height:80px; }
+.vote-bar-wrap { flex:1; display:flex; flex-direction:column; align-items:center; gap:4px; }
+.vote-bar { width:100%; background:var(--accent); border-radius:3px 3px 0 0; transition:.3s; }
+.vote-bar.low { background:var(--border); }
+.vote-bar.high { background:var(--success); }
+.vote-label { font-size:10px; color:var(--muted); }
+.vote-count { font-size:10px; font-weight:700; color:var(--text); }
+
+/* ── Empty state ── */
+.empty-state {
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  min-height:300px; color:var(--muted); gap:12px;
+}
+.empty-icon { font-size:48px; opacity:.3; }
+.empty-msg { font-size:14px; text-align:center; }
+
+/* ── Loading ── */
+.loading-bar {
+  height:2px; background:var(--border); border-radius:1px; overflow:hidden; margin-bottom:24px;
+}
+.loading-fill {
+  height:100%; background:var(--accent); width:0%;
+  transition:width .3s; border-radius:1px;
+}
+
+/* ── Info box ── */
+.info-box {
+  border-left:3px solid var(--accent); padding:10px 14px;
+  background:rgba(6,182,212,.06); border-radius:0 6px 6px 0;
+  font-size:12px; color:var(--muted); line-height:1.6;
+  margin-bottom:16px;
+}
+.info-box strong { color:var(--text); }
+
+/* ── Tab content ── */
+.tab-content { display:none; }
+.tab-content.active { display:block; }
+
+/* ── Var selector for chart ── */
+.var-selector { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
+.var-btn {
+  padding:5px 12px; border-radius:20px; font-size:12px; font-weight:600;
+  cursor:pointer; border:1px solid var(--border); color:var(--muted);
+  background:transparent; transition:.15s;
+}
+.var-btn.active { border-color:var(--accent); color:var(--accent); background:rgba(6,182,212,.1); }
+
+/* ── Alert ── */
+.alert { padding:12px 16px; border-radius:8px; font-size:12px; margin-bottom:16px; }
+.alert-success { background:rgba(16,185,129,.1); border:1px solid rgba(16,185,129,.2); color:var(--success); }
+.alert-warn { background:rgba(245,158,11,.1); border:1px solid rgba(245,158,11,.2); color:var(--warn); }
+.alert-info { background:rgba(6,182,212,.1); border:1px solid rgba(6,182,212,.2); color:var(--accent); }
+
+/* ── Responsive ── */
+@media (max-width: 900px) {
+  .layout { grid-template-columns:1fr; }
+  .sidebar { border-right:none; border-bottom:1px solid var(--border); }
+  .kpi-grid { grid-template-columns:repeat(2,1fr); }
+}
+</style>
+</head>
+<body>
+
+<!-- Topbar -->
+<div class="topbar">
+  <div style="display:flex;align-items:center;gap:12px">
+    <div class="logo">SENTI<span>NEL</span></div>
+    <div class="badge">이상탐지 v1.0</div>
+  </div>
+  <div class="topbar-right">
+    <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">대기 중</span>
+    </div>
+  </div>
+</div>
+
+<!-- Tabs -->
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('analysis')">분석</div>
+  <div class="tab" onclick="switchTab('evaluation')">평가</div>
+  <div class="tab" onclick="switchTab('methods')">방법론</div>
+</div>
+
+<!-- Layout -->
+<div class="layout">
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <input type="file" id="fileInput" accept=".csv" style="display:none" onchange="onFileChange(event)">
+    
+    <div class="upload-zone" onclick="document.getElementById('fileInput').click()" id="uploadZone">
+      <div class="upload-icon">⬆</div>
+      <div class="upload-label" id="uploadLabel">CSV 파일을 끌어다 놓거나 클릭</div>
+      <div class="upload-sub">다변량 시계열 · 시간축 자동 감지 · 최대 50MB</div>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-bottom:20px">
+      <button class="btn btn-ghost btn-sm" style="flex:1" onclick="loadDemo()">🎯 데모 데이터</button>
+      <button class="btn btn-outline btn-sm" style="flex:1" id="rerunBtn" onclick="runAnalysis()" disabled>재탐지</button>
+    </div>
+
+    <div class="form-group">
+      <div class="section-title">대상 변수</div>
+      <div class="var-pills" id="varPills"></div>
+    </div>
+
+    <div class="form-group">
+      <div class="section-title">합의 임계 (≥N표)</div>
+      <input type="range" id="nVotes" min="1" max="6" value="2" oninput="onSliderChange()">
+      <div class="slider-row">
+        <span>1표 — 민감</span>
+        <span id="nVotesLabel" style="color:var(--accent);font-weight:700">2표</span>
+        <span>6표 — 엄격</span>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <div class="section-title">평가 모드</div>
+      <select id="evalMode">
+        <option value="synthetic">합성 주입 자동평가</option>
+        <option value="none">평가 없음 (탐지만)</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <div class="section-title">활성 탐지기</div>
+      <div class="det-list" id="detList"></div>
+    </div>
+
+    <button class="btn btn-primary" style="width:100%;justify-content:center;padding:10px" id="runBtn" onclick="runAnalysis()" disabled>
+      분석 시작
+    </button>
+  </div>
+
+  <!-- Main content -->
+  <div class="main">
+    
+    <!-- Tab: Analysis -->
+    <div class="tab-content active" id="tab-analysis">
+      <div class="loading-bar"><div class="loading-fill" id="loadingBar"></div></div>
+
+      <!-- Empty state -->
+      <div class="empty-state" id="emptyState">
+        <div class="empty-icon">📡</div>
+        <div class="empty-msg">CSV 파일을 업로드하거나 <strong>데모 데이터</strong>를 실행하세요<br>6개 탐지기가 자동으로 이상을 감지합니다</div>
+      </div>
+
+      <!-- Results -->
+      <div id="results" style="display:none">
+        <!-- Alert -->
+        <div id="alertBox" class="alert alert-info" style="display:none"></div>
+
+        <!-- KPI Cards -->
+        <div class="kpi-grid" id="kpiGrid"></div>
+
+        <!-- Chart: series + anomalies -->
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+            <div>
+              <div class="card-title">01 · 시계열 · 이상점</div>
+              <div class="card-sub" id="dataInfoText">–</div>
+            </div>
+          </div>
+          <div class="var-selector" id="varSelector"></div>
+          <div class="chart-wrap" style="height:200px">
+            <canvas id="seriesChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Heatmap + vote dist -->
+        <div class="card">
+          <div class="card-title">02 · 탐지기 합의 분석</div>
+          <div class="card-sub">각 탐지기의 이상 점수를 히트맵으로 시각화합니다. 밝은 구간이 높은 이상 점수를 나타냅니다.</div>
+          <div style="display:grid;grid-template-columns:1fr 280px;gap:20px;align-items:start">
+            <div>
+              <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:8px">
+                <span>탐지기별 이상 점수 히트맵</span>
+                <span>밝을수록 이상 점수 높음</span>
+              </div>
+              <div class="heatmap-grid" id="heatmapGrid"></div>
+              <div class="info-box" style="margin-top:12px;margin-bottom:0">
+                <strong>각 행</strong>은 탐지기 하나입니다. <strong>밝을수록</strong> 이상 점수가 높습니다. 여러 행이 동시에 밝은 구간이 합의 이상으로 판정됩니다.
+              </div>
+            </div>
+            <div>
+              <div style="font-size:12px;font-weight:700;margin-bottom:12px">합의 분포 <span style="color:var(--muted);font-weight:400;font-size:11px">N표 동시 발화 포인트 수</span></div>
+              <div class="vote-bars" id="voteBars"></div>
+              <div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5">
+                N개 탐지기가 동시에 이상이라 판단한 포인트 수입니다.<br>
+                <strong style="color:var(--text)">높은 N</strong>의 포인트일수록 신뢰도가 높습니다.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Variable density -->
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <div class="card-title">03 · 변수별 이상 밀도</div>
+            <div style="font-size:11px;color:var(--muted)">어느 변수가 가장 불안정한가</div>
+          </div>
+          <div class="card-sub">다변량 데이터에서 각 변수의 이상 비율을 비교합니다.</div>
+          <div class="density-list" id="densityList"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Evaluation -->
+    <div class="tab-content" id="tab-evaluation">
+      <div class="empty-state" id="evalEmpty">
+        <div class="empty-icon">📊</div>
+        <div class="empty-msg">분석을 먼저 실행하세요</div>
+      </div>
+      <div id="evalResults" style="display:none">
+        <div class="card">
+          <div class="card-title">합성 주입 평가</div>
+          <div class="card-sub" id="evalSubtitle"></div>
+          <div id="evalChartWrap" class="chart-wrap" style="height:180px;margin-bottom:20px">
+            <canvas id="evalChart"></canvas>
+          </div>
+          <table class="eval-table" id="evalTable">
+            <thead>
+              <tr>
+                <th>탐지기</th><th>Point F1</th><th>판정</th>
+              </tr>
+            </thead>
+            <tbody id="evalTableBody"></tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <div class="card-title">평가지표 해설</div>
+          <div class="card-sub">세 지표를 함께 보면 단일 지표의 맹점을 드러낼 수 있습니다.</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+            <div style="background:var(--bg);border-radius:8px;padding:14px">
+              <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:6px">Point-wise F1</div>
+              <div style="font-size:11px;color:var(--muted);line-height:1.6">각 시점을 독립적으로 분류. 가장 보수적이며 해석이 명확하나 구간 이상 위치 오차에 가혹합니다.</div>
+            </div>
+            <div style="background:var(--bg);border-radius:8px;padding:14px">
+              <div style="font-size:12px;font-weight:700;color:var(--accent2);margin-bottom:6px">Point-Adjusted F1</div>
+              <div style="font-size:11px;color:var(--muted);line-height:1.6">정답 구간 내 하나라도 탐지 시 전체 인정. 관대하여 자명한 예측도 높은 점수를 받을 수 있습니다.</div>
+            </div>
+            <div style="background:var(--bg);border-radius:8px;padding:14px">
+              <div style="font-size:12px;font-weight:700;color:var(--accent3);margin-bottom:6px">합성 평가 한계</div>
+              <div style="font-size:11px;color:var(--muted);line-height:1.6">탐지기가 노린 유형으로 평가하면 성능이 낙관적으로 나올 수 있습니다. 실제 라벨과의 갭에 주목하세요.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Methods -->
+    <div class="tab-content" id="tab-methods">
+      <div style="max-width:760px">
+        <div class="card">
+          <div class="card-title" style="margin-bottom:16px">알고리즘 · 탐지기 6종</div>
+          <div style="display:flex;flex-direction:column;gap:12px" id="methodsList"></div>
+        </div>
+        <div class="card">
+          <div class="card-title" style="margin-bottom:16px">합의 투표 메커니즘</div>
+          <div class="info-box">
+            <strong>하드 투표</strong>: 각 탐지기가 이상(1)/정상(0)을 판정하고 ≥N표면 이상 확정<br>
+            <strong>임계 자동 선택</strong>: 합성 주입 라벨 기준 F1 최대 지점으로 탐지기별 임계 자동 추정<br>
+            <strong>N 선택</strong>: N을 1~6으로 바꿔가며 F1을 계산, 균형점을 사이드바에서 조절 가능
+          </div>
+          <div style="background:var(--bg);border-radius:8px;padding:16px;font-family:monospace;font-size:12px;color:var(--accent)">
+            votes_i = Σk [ score_k,i ≥ θk ]<br>
+            anomaly_i = 1  iff  votes_i ≥ N*<br>
+            N* = argmax_N  F1(votes ≥ N)
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title" style="margin-bottom:12px">알려진 한계</div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div style="background:var(--bg);border-radius:8px;padding:14px">
+              <div style="font-size:12px;font-weight:700;margin-bottom:4px">변수 간 상관 이상 미탐지</div>
+              <div style="font-size:11px;color:var(--muted);line-height:1.6">각 변수를 독립 단변량 시계열로 분석합니다. 변수 간 상관 구조가 깨지는 이상은 감지하지 못합니다. PCA 재구성 오차 기반 탐지기를 추가하면 보완됩니다.</div>
+            </div>
+            <div style="background:var(--bg);border-radius:8px;padding:14px">
+              <div style="font-size:12px;font-weight:700;margin-bottom:4px">합성 평가의 낙관 편향</div>
+              <div style="font-size:11px;color:var(--muted);line-height:1.6">탐지기가 노린 유형(spike·shift·variance·drift)으로 평가하므로 실제 성능보다 높게 나오는 경향이 있습니다.</div>
+            </div>
+            <div style="background:var(--bg);border-radius:8px;padding:14px">
+              <div style="font-size:12px;font-weight:700;margin-bottom:4px">오프라인 배치 전제</div>
+              <div style="font-size:11px;color:var(--muted);line-height:1.6">전체 시계열을 한 번에 받아 분석하는 배치 구조입니다. 실시간 스트리밍 온라인 탐지는 지원하지 않습니다.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+const DET_COLORS = ['#22d3ee','#f59e0b','#a78bfa','#4ade80','#f87171','#fb923c'];
+const DET_NAMES = ['Robust Z-Score','IQR Fence','Isolation Forest','Forecast Residual','Level Shift','Matrix Profile'];
+const DET_DESC = [
+  'Iglewicz & Hoaglin · 중앙값·MAD 기반 강건 표준화',
+  'Tukey · IQR 펜스 기반 분포 무가정 탐지',
+  'Liu et al. · 무작위 분할 트리 고립 경로',
+  'Box & Jenkins · AR 잔차 기반 예측 오류',
+  'Page · 좌우 윈도우 평균 차이 레벨 전환',
+  'Yeh et al. · z-정규화 서브시퀀스 최근접 거리',
+];
+
+let state = {
+  csvContent: null, filename: null,
+  variables: [], selectedVars: [],
+  activeDetectors: [...DET_NAMES],
+  nVotes: 2, evalMode: 'synthetic',
+  data: null, currentVar: null,
+  seriesChart: null, evalChart: null,
+};
+
+// ── Init detector list ─────────────────────────────────────────────────────
+function initDetList() {
+  const el = document.getElementById('detList');
+  el.innerHTML = DET_NAMES.map((n,i) => `
+    <div class="det-item active" id="det_${i}" onclick="toggleDet(${i})">
+      <div class="det-dot" style="background:${DET_COLORS[i]}"></div>
+      <div class="det-name">${n}</div>
+      <div class="det-check" id="detCheck_${i}">✓</div>
+    </div>
+  `).join('');
+}
+
+function toggleDet(i) {
+  const name = DET_NAMES[i];
+  const idx = state.activeDetectors.indexOf(name);
+  const el = document.getElementById(`det_${i}`);
+  const check = document.getElementById(`detCheck_${i}`);
+  if (idx >= 0) {
+    state.activeDetectors.splice(idx, 1);
+    el.classList.remove('active');
+    check.style.color = 'transparent';
+  } else {
+    state.activeDetectors.push(name);
+    el.classList.add('active');
+    check.style.color = '';
+  }
+}
+
+// ── Methods list ──────────────────────────────────────────────────────────
+function initMethodsList() {
+  const el = document.getElementById('methodsList');
+  el.innerHTML = DET_NAMES.map((n,i) => `
+    <div style="display:flex;gap:12px;align-items:flex-start;padding:12px;background:var(--bg);border-radius:8px">
+      <div class="det-dot" style="background:${DET_COLORS[i]};width:10px;height:10px;margin-top:2px;flex-shrink:0"></div>
+      <div>
+        <div style="font-size:13px;font-weight:700;margin-bottom:2px">${n}</div>
+        <div style="font-size:11px;color:var(--muted)">${DET_DESC[i]}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── Tab switch ─────────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    const names = ['analysis','evaluation','methods'];
+    t.classList.toggle('active', names[i] === name);
+  });
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById(`tab-${name}`).classList.add('active');
+}
+
+// ── Slider ─────────────────────────────────────────────────────────────────
+function onSliderChange() {
+  const v = document.getElementById('nVotes').value;
+  state.nVotes = parseInt(v);
+  const labels = ['','1표 — 민감','2표 — 균형','3표 — 보수','4표 — 엄격','5표','6표'];
+  document.getElementById('nVotesLabel').textContent = labels[v] || v+'표';
+}
+
+// ── File handling ──────────────────────────────────────────────────────────
+function onFileChange(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  state.filename = file.name;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    state.csvContent = ev.target.result;
+    previewCSV();
+  };
+  reader.readAsText(file);
+}
+
+// Drag & drop
+document.addEventListener('DOMContentLoaded', () => {
+  const zone = document.getElementById('uploadZone');
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.borderColor='var(--accent)'; });
+  zone.addEventListener('dragleave', () => { zone.style.borderColor=''; });
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.style.borderColor='';
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      state.filename = file.name;
+      const reader = new FileReader();
+      reader.onload = ev => { state.csvContent = ev.target.result; previewCSV(); };
+      reader.readAsText(file);
+    }
+  });
+  initDetList();
+  initMethodsList();
+});
+
+function previewCSV() {
+  try {
+    const lines = state.csvContent.split('\n').filter(Boolean);
+    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g,''));
+    // detect numeric columns (sample first 5 rows)
+    const numericCols = [];
+    headers.forEach((h, i) => {
+      let num = 0;
+      for (let r = 1; r <= Math.min(5, lines.length-1); r++) {
+        const vals = lines[r].split(',');
+        if (!isNaN(parseFloat(vals[i]))) num++;
+      }
+      if (num >= 2) numericCols.push(h);
+    });
+    state.variables = numericCols;
+    state.selectedVars = numericCols.slice(0, 6);
+    renderVarPills();
+    document.getElementById('uploadLabel').textContent = state.filename || 'CSV 업로드됨';
+    document.getElementById('runBtn').disabled = false;
+    document.getElementById('rerunBtn').disabled = false;
+  } catch(e) { console.error(e); }
+}
+
+function renderVarPills() {
+  const el = document.getElementById('varPills');
+  el.innerHTML = state.variables.map(v => `
+    <div class="var-pill ${state.selectedVars.includes(v) ? 'active':''}" onclick="toggleVar('${v}')">${v}</div>
+  `).join('');
+}
+
+function toggleVar(v) {
+  const idx = state.selectedVars.indexOf(v);
+  if (idx >= 0) { if (state.selectedVars.length > 1) state.selectedVars.splice(idx, 1); }
+  else state.selectedVars.push(v);
+  renderVarPills();
+}
+
+// ── Demo ───────────────────────────────────────────────────────────────────
+async function loadDemo() {
+  setStatus('데모 데이터 로딩 중…', false);
+  const res = await fetch('/demo_csv');
+  const text = await res.text();
+  state.csvContent = text;
+  state.filename = 'demo_sensors.csv';
+  previewCSV();
+  setStatus('데모 데이터 로드 완료', true);
+  await runAnalysis();
+}
+
+// ── Run analysis ───────────────────────────────────────────────────────────
+async function runAnalysis() {
+  if (!state.csvContent) return;
+  setStatus('분석 중…', false);
+  setLoading(true);
+
+  try {
+    const payload = {
+      csv: state.csvContent,
+      variables: state.selectedVars,
+      n_votes: state.nVotes,
+      eval_mode: document.getElementById('evalMode').value,
+      active_detectors: state.activeDetectors,
+    };
+    const res = await fetch('/analyze', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!data.ok) { setStatus('오류: ' + data.error, false); setLoading(false); return; }
+    state.data = data;
+    state.currentVar = data.variables[0];
+    renderResults(data);
+    setStatus('분석 완료 ✓', true);
+  } catch(e) {
+    setStatus('오류: ' + e.message, false);
+  }
+  setLoading(false);
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function renderResults(data) {
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('results').style.display = 'block';
+  document.getElementById('evalEmpty').style.display = 'none';
+  document.getElementById('evalResults').style.display = 'block';
+
+  // KPIs
+  const totalAnom = data.variables.reduce((s,v) => s + (data.results[v]?.n_anomalies||0), 0);
+  const totalPts = data.n_points * data.variables.length;
+  const rate = (totalAnom / totalPts * 100).toFixed(1);
+
+  // Get eval from first var with eval
+  let paF1 = null, evalInfo = null;
+  for (const v of data.variables) {
+    const ev = data.results[v]?.eval;
+    if (ev && ev.pa_f1 !== undefined) { paF1 = ev.pa_f1; evalInfo = ev; break; }
+  }
+
+  document.getElementById('kpiGrid').innerHTML = `
+    <div class="kpi cyan">
+      <div class="kpi-label">탐지된 이상</div>
+      <div class="kpi-val">${totalAnom}</div>
+      <div class="kpi-sub">전체의 ${rate}%</div>
+    </div>
+    <div class="kpi purple">
+      <div class="kpi-label">합의 F1 (PA)</div>
+      <div class="kpi-val">${paF1 !== null ? paF1 : '—'}</div>
+      <div class="kpi-sub">${evalInfo ? `P ${evalInfo.pa_precision} · R ${evalInfo.pa_recall}` : '평가 없음'}</div>
+    </div>
+    <div class="kpi amber">
+      <div class="kpi-label">활성 탐지기</div>
+      <div class="kpi-val">${state.activeDetectors.length}</div>
+      <div class="kpi-sub">${DET_NAMES.length}개 중 선택</div>
+    </div>
+    <div class="kpi green">
+      <div class="kpi-label">데이터 포인트</div>
+      <div class="kpi-val">${data.n_points}</div>
+      <div class="kpi-sub">${data.variables.length}개 변수</div>
+    </div>
+  `;
+
+  // Alert
+  const alertBox = document.getElementById('alertBox');
+  if (paF1 !== null) {
+    const cls = paF1 >= 0.8 ? 'alert-success' : paF1 >= 0.5 ? 'alert-warn' : 'alert-info';
+    const msg = paF1 >= 0.8 ? '✓ 신뢰할 만함' : paF1 >= 0.5 ? '△ 개선 여지 있음' : '✗ 낮은 탐지 성능';
+    alertBox.className = `alert ${cls}`;
+    alertBox.textContent = `이 데이터에 합성 이상을 주입하고 탐지기가 잡는지 검증했습니다. 현재 합의(≥${state.nVotes}표) 기준 point-adjusted F1 = ${paF1} → ${msg}`;
+    alertBox.style.display = 'block';
+  } else {
+    alertBox.style.display = 'none';
+  }
+
+  // Data info
+  document.getElementById('dataInfoText').textContent =
+    `${state.filename||'data.csv'} · ${data.n_points} points · ${data.variables.length} vars · ${data.time_col ? '시간축 자동감지' : '인덱스 축'}`;
+
+  // Var selector for chart
+  const sel = document.getElementById('varSelector');
+  sel.innerHTML = data.variables.map(v => `
+    <button class="var-btn ${v===state.currentVar?'active':''}" onclick="selectVar('${v}')">${v}</button>
+  `).join('');
+
+  // Series chart
+  renderSeriesChart(data, state.currentVar);
+
+  // Heatmap
+  renderHeatmap(data, state.currentVar);
+
+  // Vote distribution
+  renderVoteDist(data);
+
+  // Density
+  renderDensity(data);
+
+  // Evaluation tab
+  renderEvalTab(data);
+}
+
+function selectVar(v) {
+  state.currentVar = v;
+  document.querySelectorAll('.var-btn').forEach(b => b.classList.toggle('active', b.textContent===v));
+  renderSeriesChart(state.data, v);
+  renderHeatmap(state.data, v);
+}
+
+function renderSeriesChart(data, varName) {
+  const res = data.results[varName];
+  if (!res) return;
+  const times = data.times;
+  const n = res.series.length;
+  const labels = times.length === n ? times : Array.from({length:n},(_,i)=>i);
+
+  // Anomaly points
+  const anomPts = res.series.map((v,i) => res.consensus_anomalies[i] ? v : null);
+  const gtPts = res.eval?.gt_labels ? res.series.map((v,i) => res.eval.gt_labels[i] ? v : null) : null;
+
+  const datasets = [
+    { label:'관측값', data: res.series, borderColor:'#60a5fa', borderWidth:1.2, pointRadius:0, fill:false, tension:.3 },
+    { label:'AR 예측', data: res.ar_pred, borderColor:'rgba(255,255,255,.2)', borderWidth:1, pointRadius:0, fill:false, tension:.3, borderDash:[4,4] },
+    { label:'합의 이상', data: anomPts, borderColor:'transparent', backgroundColor:'rgba(239,68,68,.8)', pointRadius: anomPts.map(v => v!==null?4:0), pointStyle:'circle', showLine:false },
+  ];
+  if (gtPts) datasets.push({ label:'주입 GT', data: gtPts, borderColor:'transparent', backgroundColor:'rgba(245,158,11,.6)', pointRadius: gtPts.map(v=>v!==null?4:0), pointStyle:'triangle', showLine:false });
+
+  if (state.seriesChart) state.seriesChart.destroy();
+  const ctx = document.getElementById('seriesChart').getContext('2d');
+  state.seriesChart = new Chart(ctx, {
+    type:'line',
+    data: { labels, datasets },
+    options: {
+      responsive:true, maintainAspectRatio:false, animation:{duration:300},
+      plugins: { legend:{labels:{color:'#64748b',font:{size:11}}}, tooltip:{mode:'index',intersect:false} },
+      scales: {
+        x:{ ticks:{color:'#64748b',maxTicksLimit:8,font:{size:10}}, grid:{color:'rgba(255,255,255,.04)'} },
+        y:{ ticks:{color:'#64748b',font:{size:10}}, grid:{color:'rgba(255,255,255,.04)'} },
+      }
+    }
+  });
+}
+
+function renderHeatmap(data, varName) {
+  const res = data.results[varName];
+  if (!res) return;
+  const n = res.series.length;
+  const el = document.getElementById('heatmapGrid');
+
+  el.innerHTML = state.activeDetectors.map((dname, di) => {
+    const scores = res.scores[dname] || new Array(n).fill(0);
+    const color = DET_COLORS[DET_NAMES.indexOf(dname)] || '#64748b';
+    const cells = scores.map(s => {
+      const alpha = Math.min(1, s);
+      return `<div class="heatmap-cell" style="background:${color};opacity:${0.05 + alpha*0.95}"></div>`;
+    }).join('');
+    return `<div class="heatmap-row">
+      <div class="heatmap-label">${dname}</div>
+      <div class="heatmap-cells">${cells}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderVoteDist(data) {
+  const dist = data.vote_distribution;
+  const maxV = Math.max(...Object.values(dist), 1);
+  const el = document.getElementById('voteBars');
+  el.innerHTML = Object.entries(dist).map(([k,v]) => {
+    const pct = (v/maxV*100).toFixed(0);
+    const cls = k==='0' ? 'low' : parseInt(k) >= state.nVotes ? 'high' : '';
+    return `<div class="vote-bar-wrap">
+      <div class="vote-count">${v}</div>
+      <div class="vote-bar ${cls}" style="height:${pct}%"></div>
+      <div class="vote-label">${k}표</div>
+    </div>`;
+  }).join('');
+}
+
+function renderDensity(data) {
+  const el = document.getElementById('densityList');
+  const rows = data.variables.map(v => ({
+    v, rate: data.results[v]?.anomaly_rate||0, n: data.results[v]?.n_anomalies||0
+  })).sort((a,b) => b.rate - a.rate);
+
+  const maxRate = Math.max(...rows.map(r=>r.rate), 0.1);
+  el.innerHTML = rows.map((r,i) => {
+    const color = i === 0 ? 'var(--accent)' : 'rgba(6,182,212,.5)';
+    const highlighted = i===0 ? `style="color:var(--accent);font-weight:700"` : '';
+    return `<div class="density-row">
+      <div class="density-header">
+        <span class="density-varname" ${highlighted}>${r.v}</span>
+        <span class="density-stat">${r.rate}% · ${r.n}건</span>
+      </div>
+      <div class="density-bar-bg">
+        <div class="density-bar-fill" style="width:${(r.rate/maxRate*100).toFixed(0)}%;background:${color}"></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderEvalTab(data) {
+  // Collect all detector f1s across variables
+  const allF1s = {};
+  DET_NAMES.forEach(d => allF1s[d] = []);
+  
+  data.variables.forEach(v => {
+    const ev = data.results[v]?.eval;
+    if (ev && ev.det_f1s) {
+      Object.entries(ev.det_f1s).forEach(([d,f]) => { if (allF1s[d]) allF1s[d].push(f); });
+    }
+  });
+
+  const avgF1s = Object.fromEntries(
+    Object.entries(allF1s).map(([d,fs]) => [d, fs.length ? (fs.reduce((a,b)=>a+b,0)/fs.length).toFixed(3) : null])
+  );
+
+  // Eval subtitle
+  const ev = data.results[data.variables[0]]?.eval;
+  if (ev) {
+    document.getElementById('evalSubtitle').textContent =
+      `${data.variables.length}개 변수 · 합의 Point F1: ${ev.f1} / PA F1: ${ev.pa_f1} · ${ev.n_injected}개 주입`;
+  }
+
+  // Eval chart — bar chart of det f1s
+  const detNames = state.activeDetectors.filter(d => avgF1s[d] !== null);
+  const detF1Vals = detNames.map(d => parseFloat(avgF1s[d])||0);
+  
+  if (state.evalChart) state.evalChart.destroy();
+  const ctx = document.getElementById('evalChart').getContext('2d');
+  state.evalChart = new Chart(ctx, {
+    type:'bar',
+    data: {
+      labels: detNames.map(d => d.replace(' ','​')),
+      datasets:[{
+        label:'Point F1 (평균)',
+        data: detF1Vals,
+        backgroundColor: detNames.map(d => DET_COLORS[DET_NAMES.indexOf(d)] || '#64748b'),
+        borderRadius:4,
+      }]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false} },
+      scales:{
+        x:{ticks:{color:'#64748b',font:{size:10}}, grid:{display:false}},
+        y:{min:0,max:1,ticks:{color:'#64748b',font:{size:10}},grid:{color:'rgba(255,255,255,.04)'}},
+      }
+    }
+  });
+
+  // Table
+  const tbody = document.getElementById('evalTableBody');
+  tbody.innerHTML = state.activeDetectors.map((d,i) => {
+    const f1 = avgF1s[d];
+    if (f1 === null) return '';
+    const fv = parseFloat(f1);
+    const cls = fv>=0.7?'score-good':fv>=0.4?'score-ok':'score-bad';
+    const label = fv>=0.7?'우수':fv>=0.4?'보통':'미흡';
+    return `<tr>
+      <td style="display:flex;align-items:center;gap:8px">
+        <div style="width:8px;height:8px;border-radius:50%;background:${DET_COLORS[i]};flex-shrink:0"></div>
+        ${d}
+      </td>
+      <td>${f1}</td>
+      <td><span class="score-badge ${cls}">${label}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Utilities ──────────────────────────────────────────────────────────────
+function setStatus(msg, ok) {
+  document.getElementById('statusText').textContent = msg;
+  document.getElementById('statusDot').style.background = ok ? 'var(--success)' : 'var(--warn)';
+}
+
+function setLoading(on) {
+  const bar = document.getElementById('loadingBar');
+  if (on) {
+    bar.style.width = '0%';
+    let p = 0;
+    window._loadTimer = setInterval(() => {
+      p = Math.min(85, p + Math.random()*15);
+      bar.style.width = p+'%';
+    }, 300);
+  } else {
+    clearInterval(window._loadTimer);
+    bar.style.width = '100%';
+    setTimeout(() => bar.style.width = '0%', 800);
+  }
+}
+</script>
+</body>
+</html>
